@@ -6,21 +6,9 @@ import Link from "next/link";
 import Image from "next/image";
 import Footer from "@/components/Footer";
 import Header from "@/components/Header";
-import { Session } from "next-auth";
 import { useRouter } from "next/navigation";
-import PhoneInput from "react-phone-number-input";
-
-interface ExtendedUser {
-  name?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  image?: string | null;
-  provider?: string;
-}
-
-interface ExtendedSession extends Session {
-  user: ExtendedUser;
-}
+import PhoneInput, { parsePhoneNumber } from "react-phone-number-input";
+import { userAPI } from "@/lib/api";
 
 interface PasswordData {
   currentPassword: string;
@@ -31,51 +19,99 @@ interface PasswordData {
 interface ProfileData {
   name: string;
   email: string;
-  phone: string;
+  country: string;
+  subscription: string;
+  phone_number: string;
   bio: string;
   image: string | null;
-  joinDate: string;
-  authProvider: string;
+  joinDate: Date | null;
+  provider: string;
 }
-
-type E164Number = string | undefined;
 
 export default function Profile() {
   const { data: sessionData } = useSession();
-  const session = sessionData as ExtendedSession;
-
+  const session = sessionData;
   const [isEditing, setIsEditing] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
-  const [countryCode, setCountryCode] = useState<E164Number>(undefined);
   const [showImageUploadPopup, setShowImageUploadPopup] = useState(false);
   const [passwordData, setPasswordData] = useState<PasswordData>({
     currentPassword: "",
     newPassword: "",
     confirmPassword: "",
   });
+  const [profileData, setProfileData] = useState<ProfileData>({
+    name: "",
+    email: "",
+    country: "",
+    bio: "",
+    image: "",
+    joinDate: null,
+    provider: "",
+    phone_number: "",
+    subscription: "",
+  });
+  const [isLoading, setIsLoading] = useState(false);
 
   const router = useRouter();
 
   useEffect(() => {
     if (!session) {
-      // Redirect to the homepage if the user is logged in
       router.push("/");
+      return;
     }
+
+    const fetchProfile = async () => {
+      try {
+        const response = await userAPI.getProfile();
+        console.log(response.data);
+        setProfileData({
+          name: response.data.name,
+          email: response.data.email,
+          country: response.data.country,
+          bio: response.data.bio,
+          image: response.data.image,
+          joinDate: new Date(response.data.created_at),
+          provider: response.data.provider,
+          phone_number: response.data.phone_number,
+          subscription: response.data.subscription,
+        });
+      } catch (error) {
+        console.error('Failed to fetch profile:', error);
+      }
+    };
+
+    fetchProfile();
   }, [session, router]);
 
-  const [profileData, setProfileData] = useState<ProfileData>({
-    name: session?.user?.name || "User Name",
-    email: session?.user?.email || "user@example.com",
-    phone: session?.user?.phone || "123456789",
-    bio: "AI enthusiast and technology lover",
-    image: session?.user?.image || null,
-    joinDate: "November 15, 2024",
-    authProvider: session?.user?.provider || "email",
-  });
+  const handleSave = async () => {
+    if (isLoading) return;
+    
+    setIsLoading(true);
+    try {
+      const updateData = {
+        name: profileData.name,
+        email: profileData.email,
+        phone_number: profileData.phone_number,
+        country: parsePhoneNumber(profileData.phone_number)?.country,
+        // bio: profileData.bio,
+        image: profileData.image,
+      };
 
-  const handleSave = () => {
-    setIsEditing(false);
-    // Add your save logic here
+      console.log(updateData);
+
+      await userAPI.updateProfile(updateData);
+
+      // setShowImageUploadPopup(true);
+      // setTimeout(() => {
+      //   setShowImageUploadPopup(false);
+      // }, 3000);
+
+      setIsEditing(false);
+    } catch (error) {
+      console.error('Failed to update profile:', error);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handlePasswordChange = (e: React.FormEvent) => {
@@ -113,10 +149,9 @@ export default function Profile() {
       reader.readAsDataURL(file);
     }
   };
-  const handlePhoneChange = (value: E164Number) => {
-    setCountryCode(value); // Update state with the new phone number (or undefined)
+  const handlePhoneChange = (value: string | undefined) => {
+    setProfileData({ ...profileData, phone_number: value || '' }); // Handle undefined case by defaulting to empty string
   };
-  console.log(profileData.authProvider);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen relative bg-black text-white p-4 lg:p-8">
@@ -186,7 +221,7 @@ export default function Profile() {
                 <h1 className="text-2xl font-semibold">{profileData.name}</h1>
               )}
               <div className="text-sm text-[#787A7E]">
-                Member since {profileData.joinDate}
+                Member since {profileData.joinDate?.toLocaleDateString()}
               </div>
               <button
                 onClick={() => (isEditing ? handleSave() : setIsEditing(true))}
@@ -284,13 +319,14 @@ export default function Profile() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[#787A7E]">Phone Number</label>
+                  <label className="text-[#787A7E]">Country & Phone Number</label>
                   <div className="flex gap-2 w-full">
                     <PhoneInput
                       international
-                      defaultCountry="US"
+                      disabled={!isEditing}
+                      // defaultCountry="US"                      
                       placeholder="Enter phone number"
-                      value={countryCode}
+                      value={profileData.phone_number}
                       onChange={handlePhoneChange} // This now correctly updates the state with the phone number string
                     />
                   </div>
@@ -311,7 +347,7 @@ export default function Profile() {
                     <div>
                       <h3 className="font-medium">Authentication Method</h3>
                       <p className="text-sm text-[#787A7E] mt-1 flex gap-2 items-center pt-1">
-                        {profileData.authProvider === "google" ? (
+                        {profileData.provider === "google" ? (
                           <svg
                             width="25"
                             viewBox="0 0 32 33"
@@ -362,12 +398,12 @@ export default function Profile() {
                             <path d="M15,3C8.373,3,3,8.373,3,15c0,5.623,3.872,10.328,9.092,11.63C12.036,26.468,12,26.28,12,26.047v-2.051 c-0.487,0-1.303,0-1.508,0c-0.821,0-1.551-0.353-1.905-1.009c-0.393-0.729-0.461-1.844-1.435-2.526 c-0.289-0.227-0.069-0.486,0.264-0.451c0.615,0.174,1.125,0.596,1.605,1.222c0.478,0.627,0.703,0.769,1.596,0.769 c0.433,0,1.081-0.025,1.691-0.121c0.328-0.833,0.895-1.6,1.588-1.962c-3.996-0.411-5.903-2.399-5.903-5.098 c0-1.162,0.495-2.286,1.336-3.233C9.053,10.647,8.706,8.73,9.435,8c1.798,0,2.885,1.166,3.146,1.481C13.477,9.174,14.461,9,15.495,9 c1.036,0,2.024,0.174,2.922,0.483C18.675,9.17,19.763,8,21.565,8c0.732,0.731,0.381,2.656,0.102,3.594 c0.836,0.945,1.328,2.066,1.328,3.226c0,2.697-1.904,4.684-5.894,5.097C18.199,20.49,19,22.1,19,23.313v2.734 c0,0.104-0.023,0.179-0.035,0.268C23.641,24.676,27,20.236,27,15C27,8.373,21.627,3,15,3z"></path>
                           </svg>
                         )}
-                        {profileData.authProvider === "email"
+                        {profileData.provider === "email"
                           ? "Email and Password"
-                          : `Signed in with ${profileData.authProvider}`}
+                          : `Signed in with ${profileData.provider}`}
                       </p>
                     </div>
-                    {profileData.authProvider === "email" && (
+                    {profileData.provider === "email" && (
                       <button
                         onClick={() => setShowPasswordForm(!showPasswordForm)}
                         className="px-4 py-2 bg-[#393A40] rounded-lg hover:bg-[#4A4B52] transition-colors"
@@ -377,7 +413,7 @@ export default function Profile() {
                     )}
                   </div>
 
-                  {showPasswordForm && profileData.authProvider === "email" && (
+                  {showPasswordForm && profileData.provider === "email" && (
                     <form
                       onSubmit={handlePasswordChange}
                       className="mt-4 space-y-4"
