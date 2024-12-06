@@ -7,9 +7,9 @@ import Image from "next/image";
 import Footer from "@/components/Footer";
 import Header from "@/components/Header";
 import { useRouter } from "next/navigation";
-import PhoneInput, { parsePhoneNumber } from "react-phone-number-input";
+import PhoneInput, { parsePhoneNumber, isPossiblePhoneNumber } from "react-phone-number-input";
 import { userAPI } from "@/lib/api";
-
+import { useToast } from "@/hooks/useToast";
 interface PasswordData {
   currentPassword: string;
   newPassword: string;
@@ -28,9 +28,40 @@ interface ProfileData {
   provider: string;
 }
 
+// Add this interface for tracking changes
+interface ChangedFields {
+  name?: string;
+  email?: string;
+  phone_number?: string;
+  country?: string;
+  bio?: string;
+  image?: string;
+}
+
+// Add this type at the top with other interfaces
+type SubscriptionType = 'FREE' | 'PLUS' | 'BUSINESS';
+
+// Add these subscription configs
+const SUBSCRIPTION_CONFIGS = {
+  FREE: {
+    title: 'Free Plan',
+    price: '$0/month',
+    showUpgrade: true
+  },
+  PLUS: {
+    title: 'Pro Plan',
+    price: '$15/month',
+    showUpgrade: true
+  },
+  BUSINESS: {
+    title: 'Enterprise Plan',
+    price: 'Custom',
+    showUpgrade: false
+  }
+};
+
 export default function Profile() {
-  const { data: sessionData } = useSession();
-  const session = sessionData;
+  const { data: session, update } = useSession();
   const [isEditing, setIsEditing] = useState(false);
   const [showPasswordForm, setShowPasswordForm] = useState(false);
   const [showImageUploadPopup, setShowImageUploadPopup] = useState(false);
@@ -51,7 +82,8 @@ export default function Profile() {
     subscription: "",
   });
   const [isLoading, setIsLoading] = useState(false);
-
+  const [changedFields, setChangedFields] = useState<ChangedFields>({});
+  const toast = useToast();
   const router = useRouter();
 
   useEffect(() => {
@@ -63,12 +95,11 @@ export default function Profile() {
     const fetchProfile = async () => {
       try {
         const response = await userAPI.getProfile();
-        console.log(response.data);
         setProfileData({
           name: response.data.name,
           email: response.data.email,
           country: response.data.country,
-          bio: response.data.bio,
+          bio: response.data.bio || "",
           image: response.data.image,
           joinDate: new Date(response.data.created_at),
           provider: response.data.provider,
@@ -76,39 +107,53 @@ export default function Profile() {
           subscription: response.data.subscription,
         });
       } catch (error) {
-        console.error('Failed to fetch profile:', error);
+        toast.error(`Failed to fetch profile: ${error}`);
       }
     };
 
     fetchProfile();
   }, [session, router]);
 
+  const handleProfileDataChange = (field: keyof ChangedFields, value: string) => {
+    setProfileData(prev => ({ ...prev, [field]: value }));
+    setChangedFields(prev => ({ ...prev, [field]: value }));
+  };
+
   const handleSave = async () => {
-    if (isLoading) return;
+    if (isLoading || Object.keys(changedFields).length === 0) {
+      setIsEditing(false);
+      return;
+    }
     
     setIsLoading(true);
     try {
-      const updateData = {
-        name: profileData.name,
-        email: profileData.email,
-        phone_number: profileData.phone_number,
-        country: parsePhoneNumber(profileData.phone_number)?.country,
-        // bio: profileData.bio,
-        image: profileData.image,
-      };
+      const updateData: ChangedFields = {};
+      
+      // Only include changed fields in the update data
+      Object.keys(changedFields).forEach(key => {
+        const field = key as keyof ChangedFields;
+        updateData[field] = changedFields[field];
+      });
 
-      console.log(updateData);
+      // Add country if phone number changed
+      if (changedFields.phone_number) {
+        updateData.country = parsePhoneNumber(changedFields.phone_number)?.country;
+      }
+      if (changedFields.image && session?.user) {
+        await update({
+          ...session,
+          user: {
+            ...session.user,
+            image: changedFields.image
+          }
+        });
+      }
 
       await userAPI.updateProfile(updateData);
-
-      // setShowImageUploadPopup(true);
-      // setTimeout(() => {
-      //   setShowImageUploadPopup(false);
-      // }, 3000);
-
+      setChangedFields({}); // Reset changed fields after successful update
       setIsEditing(false);
     } catch (error) {
-      console.error('Failed to update profile:', error);
+      toast.error(`Failed to update profile: ${error}`);
     } finally {
       setIsLoading(false);
     }
@@ -132,10 +177,7 @@ export default function Profile() {
       reader.onload = (e) => {
         const result = e.target?.result;
         if (typeof result === "string") {
-          setProfileData({
-            ...profileData,
-            image: result,
-          });
+          handleProfileDataChange('image', result);
 
           // Show popup
           setShowImageUploadPopup(true);
@@ -150,7 +192,7 @@ export default function Profile() {
     }
   };
   const handlePhoneChange = (value: string | undefined) => {
-    setProfileData({ ...profileData, phone_number: value || '' }); // Handle undefined case by defaulting to empty string
+    handleProfileDataChange('phone_number', value || '');
   };
 
   return (
@@ -213,7 +255,7 @@ export default function Profile() {
                   type="text"
                   value={profileData.name}
                   onChange={(e) =>
-                    setProfileData({ ...profileData, name: e.target.value })
+                    handleProfileDataChange('name', e.target.value)
                   }
                   className="bg-black/0 border-2 border-[#2E3036] rounded-lg px-4 py-2 text-xl font-semibold"
                 />
@@ -272,18 +314,24 @@ export default function Profile() {
           <section className="w-full border-2 border-[#2E3036] rounded-lg p-6">
             <div className="flex justify-between items-center mb-4">
               <h2 className="text-lg font-semibold">Current Plan</h2>
-              <Link
-                href="/upgrade"
-                className="px-4 py-2 bg-[#D3830A]/15 text-white rounded-lg hover:bg-[#D3830A]/20 transition-colors"
-              >
-                Upgrade Plan
-              </Link>
+              {SUBSCRIPTION_CONFIGS[profileData.subscription as SubscriptionType]?.showUpgrade && (
+                <Link
+                  href="/upgrade"
+                  className="px-4 py-2 bg-[#D3830A]/15 text-white rounded-lg hover:bg-[#D3830A]/20 transition-colors"
+                >
+                  Upgrade Plan
+                </Link>
+              )}
             </div>
             <div className="bg-[#1E1F23] rounded-lg p-4">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h3 className="text-xl font-semibold">Pro Plan</h3>
-                  <p className="text-[#787A7E]">$15/month</p>
+                  <h3 className="text-xl font-semibold">
+                    {SUBSCRIPTION_CONFIGS[profileData.subscription as SubscriptionType]?.title || 'Free Plan'}
+                  </h3>
+                  <p className="text-[#787A7E]">
+                    {SUBSCRIPTION_CONFIGS[profileData.subscription as SubscriptionType]?.price || '$0/month'}
+                  </p>
                 </div>
                 <span className="px-3 py-1 bg-blue-600/20 text-blue-400 rounded-full text-sm">
                   Active
@@ -292,7 +340,11 @@ export default function Profile() {
               <div className="mt-4 pt-4 border-t border-[#2E3036]">
                 <div className="flex justify-between text-sm">
                   <span className="text-[#787A7E]">Next billing date:</span>
-                  <span>December 19, 2024</span>
+                  <span>
+                    {profileData.subscription === 'free'
+                      ? 'No billing' 
+                      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toLocaleDateString()}
+                  </span>
                 </div>
               </div>
             </div>
@@ -312,9 +364,7 @@ export default function Profile() {
                     type="email"
                     value={profileData.email}
                     disabled={!isEditing}
-                    onChange={(e) =>
-                      setProfileData({ ...profileData, email: e.target.value })
-                    }
+                    onChange={(e) => handleProfileDataChange('email', e.target.value)}
                     className="w-full bg-black/0 border-2 border-[#2E3036] rounded-lg px-4 py-2"
                   />
                 </div>
@@ -324,6 +374,9 @@ export default function Profile() {
                     <PhoneInput
                       international
                       disabled={!isEditing}
+                      rules={{
+                        validateNumber: isPossiblePhoneNumber
+                      }}
                       // defaultCountry="US"                      
                       placeholder="Enter phone number"
                       value={profileData.phone_number}
@@ -337,7 +390,7 @@ export default function Profile() {
                     value={profileData.bio}
                     disabled={!isEditing}
                     onChange={(e) =>
-                      setProfileData({ ...profileData, bio: e.target.value })
+                      handleProfileDataChange('bio', e.target.value)
                     }
                     className="w-full bg-black/0 border-2 border-[#2E3036] rounded-lg px-4 py-2 min-h-[100px]"
                   />

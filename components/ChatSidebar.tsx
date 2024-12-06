@@ -2,12 +2,13 @@ import React, { useState, useEffect } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { chatAPI } from "@/lib/api";
+import { useToast } from "@/hooks/useToast";
 
 export interface Chat {
   id: number;
   updated_at: string;
   title: string;
-  msg_history: string[];
+  msg_history: [string, string][];
 }
 
 interface GroupedChats {
@@ -26,7 +27,7 @@ const ChatSidebar = ({ onChatSelect, onChatDelete, onNewChat }: ChatSidebarProps
   const [chats, setChats] = useState<Chat[]>([]);
   const [editingChatId, setEditingChatId] = useState<number | null>(null);
   const [newTitle, setNewTitle] = useState("");
-
+  const toast = useToast();
   // Fetch chats on component mount
   useEffect(() => {
     fetchChats();
@@ -37,7 +38,7 @@ const ChatSidebar = ({ onChatSelect, onChatDelete, onNewChat }: ChatSidebarProps
       const response = await chatAPI.getMessages();
       setChats(response.data);
     } catch (error) {
-      console.error("Failed to fetch chats:", error);
+      toast.error(`Failed to fetch chats: ${error}`);
     }
   };
 
@@ -47,7 +48,7 @@ const ChatSidebar = ({ onChatSelect, onChatDelete, onNewChat }: ChatSidebarProps
       onChatSelect(response.data);
       setActiveDropdown(null);
     } catch (error) {
-      console.error("Failed to load chat:", error);
+      toast.error(`Failed to load chat: ${error}`);
     }
   };
 
@@ -58,7 +59,7 @@ const ChatSidebar = ({ onChatSelect, onChatDelete, onNewChat }: ChatSidebarProps
       onChatDelete(chatId);
       setActiveDropdown(null);
     } catch (error) {
-      console.error("Failed to delete chat:", error);
+      toast.error(`Failed to delete chat: ${error}`);
     }
   };
 
@@ -72,7 +73,7 @@ const ChatSidebar = ({ onChatSelect, onChatDelete, onNewChat }: ChatSidebarProps
       setNewTitle("");
       setActiveDropdown(null);
     } catch (error) {
-      console.error("Failed to rename chat:", error);
+      toast.error(`Failed to rename chat: ${error}`);
     }
   };
 
